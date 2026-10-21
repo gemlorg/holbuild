@@ -154,8 +154,6 @@ fun runtime_helper_path () =
 fun runtime_line () =
   "use " ^ HolbuildToolchain.sml_string (runtime_helper_path ()) ^ ";"
 
-fun load_theory_line name = "HolbuildRuntime.load " ^ HolbuildToolchain.sml_string name ^ ";"
-
 fun use_generated_lines dep =
   ["HolbuildRuntime.use " ^ HolbuildToolchain.sml_string (dependency_sig dep) ^ ";",
    "HolbuildRuntime.use " ^ HolbuildToolchain.sml_string (dependency_sml dep) ^ ";"]
@@ -197,12 +195,6 @@ fun project_theory_load_stems deps =
 fun fakeload_line name = "Meta.fakeload " ^ HolbuildToolchain.sml_string name ^ ";"
 
 fun load_project_line dep = "HolbuildRuntime.load " ^ HolbuildToolchain.sml_string dep ^ ";"
-
-fun project_preload_lines dep =
-  case #kind (HolbuildBuildPlan.source_of dep) of
-      HolbuildSourceIndex.TheoryScript => [load_project_line (load_stem dep)]
-    | HolbuildSourceIndex.Sml => [load_project_line (load_stem dep)]
-    | HolbuildSourceIndex.Sig => []
 
 fun checkpoint_ok_path path = HolbuildCheckpointStore.ok_path path
 
@@ -258,21 +250,28 @@ fun project_preload_deps plan node =
     List.filter needed (HolbuildBuildPlan.direct_project_deps plan node)
   end
 
-fun preload_lines plan node =
+(* The dependencies load in one HOL load call, of a module whose manifest
+   lists them and nothing else, so that HOL orders them and their ancestors
+   as it would for any other load of them.  One call per dependency would
+   impose the order of the calls. *)
+fun preload_lines plan node preload_path =
   let
     val external_deps = HolbuildBuildPlan.direct_external_theories plan node
     val external_libs = HolbuildBuildPlan.direct_external_libs plan node
-    val project_deps = project_preload_deps plan node
+    val project_deps =
+          List.filter loadable_project_dep (project_preload_deps plan node)
+    val deps_module = Path.concat(Path.dir preload_path, "holbuild_deps")
   in
-    map load_theory_line external_deps @
-    map load_project_line external_libs @
-    List.concat (map project_preload_lines project_deps)
+    write_object_manifest (deps_module ^ ".ui") [];
+    write_object_manifest (deps_module ^ ".uo")
+      (external_deps @ external_libs @ map load_stem project_deps);
+    [load_project_line deps_module]
   end
 
 fun write_preload plan node deps_loaded deps_ok path =
   let
     val lines = runtime_line () ::
-                (preload_lines plan node @
+                (preload_lines plan node path @
                  [checkpoint_save_runtime_line (),
                   save_heap_line {label = "deps_loaded", share_common_data = true,
                                   output = deps_loaded, ok_text = deps_ok}])
@@ -281,7 +280,7 @@ fun write_preload plan node deps_loaded deps_ok path =
   end
 
 fun write_plain_preload plan node path =
-  write_text path (String.concatWith "\n" (runtime_line () :: preload_lines plan node) ^ "\n")
+  write_text path (String.concatWith "\n" (runtime_line () :: preload_lines plan node path) ^ "\n")
 
 (* HOL's theory exporter enables generated HTML documentation by default.  A
    holbuild child runs in a disposable stage and these files are not build

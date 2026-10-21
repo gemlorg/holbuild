@@ -85,9 +85,11 @@ if [[ -z "$preload" ]]; then
   exit 1
 fi
 
-require_grep 'HolbuildRuntime.load ".*/CTheory";' "$preload"
-if grep -Eq 'HolbuildRuntime.load ".*/(ATheory|BTheory)";' "$preload"; then
+deps=$(dirname "$preload")/.hol/objs/holbuild_deps.uo
+require_grep 'HolbuildRuntime.load ".*/holbuild_deps";' "$preload"
+require_grep '/CTheory$' "$deps"
+if grep -Eq '/(ATheory|BTheory)$' "$deps"; then
   echo "preload flattened transitive project dependencies" >&2
-  cat "$preload" >&2
+  cat "$deps" >&2
   exit 1
 fi
